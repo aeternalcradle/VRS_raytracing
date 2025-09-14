@@ -117,6 +117,11 @@ Shader "Tutorial/Metal"
           float t = RayTCurrent();
           float3 positionWS = origin + direction * t;
 
+          if (rayIntersection.hitT < 0.0f)
+          {
+            rayIntersection.hitT = t;
+          }
+
           // Make reflection ray.
           float3 reflectDir = reflect(direction, normalWS);
           if (dot(reflectDir, normalWS) < 0.0f)

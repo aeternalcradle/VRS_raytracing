@@ -16,6 +16,7 @@ public abstract class RayTracingTutorial
     public static readonly int _WorldSpaceCameraPos = Shader.PropertyToID("_WorldSpaceCameraPos");
     public static readonly int _InvCameraViewProj = Shader.PropertyToID("_InvCameraViewProj");
     public static readonly int _CameraFarDistance = Shader.PropertyToID("_CameraFarDistance");
+    public static readonly int _PrevViewProj = Shader.PropertyToID("_PrevViewProj");
   }
 
   /// <summary>
@@ -45,6 +46,11 @@ public abstract class RayTracingTutorial
   /// the shader.
   /// </summary>
   protected RayTracingShader _shader;
+
+  /// <summary>
+  /// per camera previous view-projection matrix.
+  /// </summary>
+  private readonly Dictionary<int, Matrix4x4> _prevViewProjByCamera = new Dictionary<int, Matrix4x4>();
 
   /// <summary>
   /// constructor.
@@ -151,15 +157,26 @@ public abstract class RayTracingTutorial
   /// setup camera.
   /// </summary>
   /// <param name="camera">the camera.</param>
-  private static void SetupCamera(Camera camera)
+  protected void SetupCamera(Camera camera)
   {
     Shader.SetGlobalVector(CameraShaderParams._WorldSpaceCameraPos, camera.transform.position);
     var projMatrix = GL.GetGPUProjectionMatrix(camera.projectionMatrix, false);
     var viewMatrix = camera.worldToCameraMatrix;
     var viewProjMatrix = projMatrix * viewMatrix;
+
+    var id = camera.GetInstanceID();
+    if (_prevViewProjByCamera.TryGetValue(id, out var prevViewProj) == false)
+      prevViewProj = viewProjMatrix;
+
+    // set previous view-projection for reprojection
+    Shader.SetGlobalMatrix(CameraShaderParams._PrevViewProj, prevViewProj);
+
     var invViewProjMatrix = Matrix4x4.Inverse(viewProjMatrix);
     Shader.SetGlobalMatrix(CameraShaderParams._InvCameraViewProj, invViewProjMatrix);
     Shader.SetGlobalFloat(CameraShaderParams._CameraFarDistance, camera.farClipPlane);
+
+    // update cache for next frame
+    _prevViewProjByCamera[id] = viewProjMatrix;
   }
 
 }

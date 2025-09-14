@@ -12,6 +12,7 @@
 
 CBUFFER_START(CameraBuffer)
 float4x4 _InvCameraViewProj;
+float4x4 _PrevViewProj;
 float3 _WorldSpaceCameraPos;
 float _CameraFarDistance;
 float3 _FocusCameraLeftBottomCorner;

@@ -19,6 +19,11 @@ public class CornellBox : RayTracingTutorial
     public static readonly int _FocusCameraHalfAperture = Shader.PropertyToID("_FocusCameraHalfAperture");
   }
 
+  private static class HistoryShaderParams
+  {
+    public static readonly int _HistoryColor = Shader.PropertyToID("_HistoryColor");
+  }
+
   private readonly int _PRNGStatesShaderId = Shader.PropertyToID("_PRNGStates");
 
   /// <summary>
@@ -27,6 +32,41 @@ public class CornellBox : RayTracingTutorial
   private int _frameIndex = 0;
 
   private readonly int _frameIndexShaderId = Shader.PropertyToID("_FrameIndex");
+
+  /// <summary>
+  /// history targets per camera.
+  /// </summary>
+  private readonly System.Collections.Generic.Dictionary<int, RTHandle> _historyTargets = new System.Collections.Generic.Dictionary<int, RTHandle>();
+
+  private RTHandle RequireHistoryTarget(Camera camera)
+  {
+    var id = camera.GetInstanceID();
+    if (_historyTargets.TryGetValue(id, out var history))
+      return history;
+
+    history = RTHandles.Alloc(
+      camera.pixelWidth,
+      camera.pixelHeight,
+      1,
+      DepthBits.None,
+      GraphicsFormat.R32G32B32A32_SFloat,
+      FilterMode.Point,
+      TextureWrapMode.Clamp,
+      TextureDimension.Tex2D,
+      true,
+      false,
+      false,
+      false,
+      1,
+      0f,
+      MSAASamples.None,
+      false,
+      false,
+      RenderTextureMemoryless.None,
+      $"HistoryTarget_{camera.name}");
+    _historyTargets.Add(id, history);
+    return history;
+  }
 
   /// <summary>
   /// constructor.
@@ -50,6 +90,7 @@ public class CornellBox : RayTracingTutorial
 
     var outputTarget = RequireOutputTarget(camera);
     var outputTargetSize = RequireOutputTargetSize(camera);
+    var historyTarget = RequireHistoryTarget(camera);
 
     var accelerationStructure = _pipeline.RequestAccelerationStructure();
     var PRNGStates = _pipeline.RequirePRNGStates(camera);
@@ -74,6 +115,7 @@ public class CornellBox : RayTracingTutorial
           cmd.SetRayTracingBufferParam(_shader, _PRNGStatesShaderId, PRNGStates);
           cmd.SetRayTracingTextureParam(_shader, _outputTargetShaderId, outputTarget);
           cmd.SetRayTracingVectorParam(_shader, _outputTargetSizeShaderId, outputTargetSize);
+          cmd.SetRayTracingTextureParam(_shader, HistoryShaderParams._HistoryColor, historyTarget);
           cmd.DispatchRays(_shader, "CornellBoxGenShader", (uint) outputTarget.rt.width,
             (uint) outputTarget.rt.height, 1, camera);
         }
@@ -86,6 +128,8 @@ public class CornellBox : RayTracingTutorial
       using (new ProfilingSample(cmd, "FinalBlit"))
       {
         cmd.Blit(outputTarget, BuiltinRenderTextureType.CameraTarget, Vector2.one, Vector2.zero);
+        // copy current output to history
+        cmd.Blit(outputTarget, historyTarget);
       }
 
       context.ExecuteCommandBuffer(cmd);

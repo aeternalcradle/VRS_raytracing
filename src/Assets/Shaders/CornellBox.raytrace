@@ -9,6 +9,8 @@
 RWTexture2D<float4> _OutputTarget;
 float4 _OutputTargetSize;
 int _FrameIndex;
+TEXTURE2D(_HistoryColor);
+SAMPLER(sampler_HistoryColor);
 
 [shader("raygeneration")]
 void CornellBoxGenShader()
@@ -18,6 +20,9 @@ void CornellBoxGenShader()
   uint4 PRNGStates = _PRNGStates[PRNGIndex];
 
   float4 finalColor = float4(0, 0, 0, 0);
+  float hitT = -1.0f;
+  float3 rayOrigin = 0;
+  float3 rayDirection = 0;
   {
     float3 origin;
     float3 direction;
@@ -35,10 +40,14 @@ void CornellBoxGenShader()
     rayIntersection.remainingDepth = MAX_DEPTH - 1;
     rayIntersection.PRNGStates = PRNGStates;
     rayIntersection.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    rayIntersection.hitT = -1.0f;
 
     TraceRay(_AccelerationStructure, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 1, 0, rayDescriptor, rayIntersection);
     PRNGStates = rayIntersection.PRNGStates;
     finalColor += rayIntersection.color;
+    hitT = rayIntersection.hitT;
+    rayOrigin = origin;
+    rayDirection = direction;
     //finalColor = float4(
     //  clamp(0.0f, 1.0f, rayIntersection.color.r),
     //  clamp(0.0f, 1.0f, rayIntersection.color.g),
@@ -50,10 +59,32 @@ void CornellBoxGenShader()
   _PRNGStates[PRNGIndex] = PRNGStates;
   if (_FrameIndex > 1)
   {
+    float2 curUV = (dispatchIdx + 0.5f) / _OutputTargetSize.xy;
+    float4 historyColor = 0;
+    if (hitT > 0.0f)
+    {
+      float3 hitPosWS = rayOrigin + rayDirection * hitT;
+      float4 prevClip = mul(_PrevViewProj, float4(hitPosWS, 1.0f));
+      float2 prevNDC = prevClip.xy / prevClip.w;
+      float2 prevUV = prevNDC * 0.5f + 0.5f;
+      if (all(prevUV >= 0.0f.xx) && all(prevUV <= 1.0f.xx))
+      {
+        historyColor = SAMPLE_TEXTURE2D_LOD(_HistoryColor, sampler_HistoryColor, prevUV, 0);
+      }
+      else
+      {
+        historyColor = _OutputTarget[dispatchIdx];
+      }
+    }
+    else
+    {
+      historyColor = _OutputTarget[dispatchIdx];
+    }
     float a = 1.0f / (float)_FrameIndex;
-    finalColor = _OutputTarget[dispatchIdx] * (1.0f - a) + finalColor * a;
+    finalColor = historyColor * (1.0f - a) + finalColor * a;
   }
 
+  finalColor.a = max(0.0f, hitT);
   _OutputTarget[dispatchIdx] = finalColor;
 }
 
@@ -61,4 +92,5 @@ void CornellBoxGenShader()
 void MissShader(inout RayIntersection rayIntersection : SV_RayPayload)
 {
   rayIntersection.color = float4(0.0f, 0.0f, 0.0f, 1.0f);
+  rayIntersection.hitT = -1.0f;
 }

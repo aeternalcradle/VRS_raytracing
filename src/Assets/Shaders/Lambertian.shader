@@ -136,6 +136,12 @@
           float t = RayTCurrent();
           float3 positionWS = origin + direction * t;
 
+          // write primary hitT for reprojection when this is the primary ray
+          if (rayIntersection.hitT < 0.0f)
+          {
+            rayIntersection.hitT = t;
+          }
+
           // Make reflection ray.
           ONB uvw;
           ONBBuildFromW(uvw, normalWS);
