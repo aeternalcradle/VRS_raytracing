@@ -123,6 +123,8 @@ void CornellBoxGenShader()
         {
           // drop history
           prevCount = 0.0f;
+
+          
         }
       }
       else
