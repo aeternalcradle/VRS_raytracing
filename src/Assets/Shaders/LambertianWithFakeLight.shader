@@ -142,6 +142,13 @@
           float3 scatteredDir;
           float pdf;
 
+          // primary hit write
+          if (rayIntersection.hitT < 0.0f)
+          {
+            rayIntersection.hitT = t;
+            rayIntersection.normalWS = normalWS;
+          }
+
           if (GetRandomValue(rayIntersection.PRNGStates) < 0.5f)
           {
             scatteredDir = ONBLocal(uvw, GetRandomCosineDirection(rayIntersection.PRNGStates));

@@ -140,6 +140,8 @@
           if (rayIntersection.hitT < 0.0f)
           {
             rayIntersection.hitT = t;
+            rayIntersection.normalWS = normalWS;
+            rayIntersection.baseColor = texColor.rgb;
           }
 
           // Make reflection ray.

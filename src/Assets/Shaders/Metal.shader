@@ -120,6 +120,8 @@ Shader "Tutorial/Metal"
           if (rayIntersection.hitT < 0.0f)
           {
             rayIntersection.hitT = t;
+            rayIntersection.normalWS = normalWS;
+            rayIntersection.baseColor = _Color.rgb;
           }
 
           // Make reflection ray.

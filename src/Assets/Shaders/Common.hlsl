@@ -30,6 +30,8 @@ struct RayIntersection
   uint4 PRNGStates;
   float4 color;
   float hitT;
+  float3 normalWS; // primary hit normal for reprojection validation
+  float3 baseColor; // primary hit base color (albedo) for reprojection validation
 };
 
 struct AttributeData

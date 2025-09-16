@@ -111,26 +111,28 @@ public abstract class RayTracingTutorial
       return outputTarget;
 
     outputTarget = RTHandles.Alloc(
-      camera.pixelWidth,
-      camera.pixelHeight,
-      1,
-      DepthBits.None,
-      GraphicsFormat.R32G32B32A32_SFloat,
-      FilterMode.Point,
-      TextureWrapMode.Clamp,
-      TextureDimension.Tex2D,
-      true,
-      false,
-      false,
-      false,
-      1,
-      0f,
-      MSAASamples.None,
-      false,
-      false,
-      RenderTextureMemoryless.None,
-      $"OutputTarget_{camera.name}");
-    _outputTargets.Add(id, outputTarget);
+      width: camera.pixelWidth,
+      height: camera.pixelHeight,
+      slices: 1,
+      depthBufferBits: DepthBits.None,
+      colorFormat: GraphicsFormat.R32G32B32A32_SFloat,
+      filterMode: FilterMode.Point,
+      wrapMode: TextureWrapMode.Clamp,
+      dimension: TextureDimension.Tex2D,
+      enableRandomWrite: true,
+      useMipMap: false,
+      autoGenerateMips: false,
+      isShadowMap: false,
+      anisoLevel: 1,
+      mipMapBias: 0f,
+      msaaSamples: MSAASamples.None,
+      bindTextureMS: false,
+      useDynamicScale: false,
+      memoryless: RenderTextureMemoryless.None,
+      vrUsage: VRTextureUsage.None,
+      name: $"OutputTarget_{camera.name}"
+    );
+        _outputTargets.Add(id, outputTarget);
 
     return outputTarget;
   }
