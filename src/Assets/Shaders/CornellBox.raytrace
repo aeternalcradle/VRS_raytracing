@@ -32,7 +32,7 @@ SAMPLER(sampler_HistoryBaseColor);
 // base color similarity threshold (L2 distance in [0,1] space)
 #define BASECOLOR_DIFF_THR (0.10f)
 // per-pixel count clamp to keep responsiveness
-#define COUNT_NMAX (6400.0f)
+#define COUNT_NMAX (256.0f)
 
 [shader("raygeneration")]
 void CornellBoxGenShader()
@@ -78,11 +78,6 @@ void CornellBoxGenShader()
     rayDirection = direction;
     curNormalWS = normalize(rayIntersection.normalWS);
     curBaseColor = rayIntersection.baseColor;
-    //finalColor = float4(
-    //  clamp(0.0f, 1.0f, rayIntersection.color.r),
-    //  clamp(0.0f, 1.0f, rayIntersection.color.g),
-    //  clamp(0.0f, 1.0f, rayIntersection.color.b),
-    //  clamp(0.0f, 1.0f, rayIntersection.color.a));
   }
   finalColor = float4(sqrt(finalColor.r), sqrt(finalColor.g), sqrt(finalColor.b), finalColor.a);
 
@@ -93,65 +88,11 @@ void CornellBoxGenShader()
   float4 baseColorOut = (hitT > 0.0f) ? float4(curBaseColor, 1.0f) : float4(0, 0, 0, 0);
   _BaseColorTarget[dispatchIdx] = baseColorOut;
 
+  // initialize per-pixel count for temporal pass
+  float outCount = (hitT > 0.0f) ? 1.0f : 0.0f;
+  _CountTarget[dispatchIdx] = outCount;
+
   _PRNGStates[PRNGIndex] = PRNGStates;
-  if (_FrameIndex > 1)
-  {
-    float2 curUV = (dispatchIdx + 0.5f) / _OutputTargetSize.xy;
-    float4 historyColor = 0;
-    bool historyValid = false;
-    float prevCount = 0.0f;
-    if (hitT > 0.0f)
-    {
-      float3 hitPosWS = rayOrigin + rayDirection * hitT;
-      float4 prevClip = mul(_PrevViewProj, float4(hitPosWS, 1.0f));
-      float2 prevNDC = prevClip.xy / prevClip.w;
-      float2 prevUV = prevNDC * 0.5f + 0.5f;
-      if (all(prevUV >= 0.0f.xx) && all(prevUV <= 1.0f.xx))
-      {
-        // sample history color, normal, count, and base color
-        historyColor = SAMPLE_TEXTURE2D_LOD(_HistoryColor, sampler_HistoryColor, prevUV, 0);
-        float3 historyNormal = SAMPLE_TEXTURE2D_LOD(_HistoryNormal, sampler_HistoryNormal, prevUV, 0).xyz;
-        historyNormal = normalize(historyNormal);
-        float cosTheta = dot(curNormalWS, historyNormal);
-        bool normalValid = cosTheta >= NORMAL_REPROJ_COS_THR;
-        float3 historyBaseColor = SAMPLE_TEXTURE2D_LOD(_HistoryBaseColor, sampler_HistoryBaseColor, prevUV, 0).xyz;
-        float colorDiff = length(curBaseColor - historyBaseColor);
-        bool colorValid = colorDiff <= BASECOLOR_DIFF_THR;
-        historyValid = normalValid && colorValid;
-        prevCount = SAMPLE_TEXTURE2D_LOD(_HistoryCount, sampler_HistoryCount, prevUV, 0).r;
-        if (!historyValid)
-        {
-          // drop history
-          prevCount = 0.0f;
-
-          
-        }
-      }
-      else
-      {
-        historyColor = _OutputTarget[dispatchIdx];
-      }
-    }
-    else
-    {
-      historyColor = _OutputTarget[dispatchIdx];
-    }
-
-    // per-pixel unbiased running average with clamp
-    float N = min(prevCount + 1.0f, COUNT_NMAX);
-    float a = 1.0f / N;
-    finalColor = historyColor * (1.0f - a) + finalColor * a;
-
-    // write back current count
-    float outCount = (hitT > 0.0f) ? N : 0.0f;
-    _CountTarget[dispatchIdx] = outCount;
-  }
-  else
-  {
-    // first frame: initialize count
-    float outCount = (hitT > 0.0f) ? 1.0f : 0.0f;
-    _CountTarget[dispatchIdx] = outCount;
-  }
 
   finalColor.a = max(0.0f, hitT);
   _OutputTarget[dispatchIdx] = finalColor;

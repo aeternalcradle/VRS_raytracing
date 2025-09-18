@@ -1,9 +1,9 @@
-﻿Shader "Tutorial/LambertianWithFakeLight"
+Shader "Tutorial/LambertianWithFakeLightForCube"
 {
   Properties
   {
-    _Color ("Main Color", Color) = (1,1,1,1)
-    _BaseColorMap("BaseColorMap", 2D) = "white" {}
+    _Color ("Main Color", Color) = (0,0,0,0)
+    _BaseColorMap("BaseColorMap", 2D) = "blue" {}
   }
   SubShader
   {

@@ -14,4 +14,7 @@ public class CornellBoxAsset : RayTracingTutorialAsset
   {
     return new CornellBox(this);
   }
+
+  public ComputeShader denoiseBilateral;
+  public ComputeShader temporalReproject;
 }

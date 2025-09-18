@@ -186,6 +186,8 @@ public class CornellBox : RayTracingTutorial
   private RTHandle _normalTarget;
   private RTHandle _countTarget;
   private RTHandle _baseColorTarget;
+  private RTHandle _denoisedTarget;
+  private RTHandle _temporalTarget;
   private RTHandle RequireNormalTarget(Camera camera)
   {
     if (_normalTarget != null && (_normalTarget.rt.width == camera.pixelWidth && _normalTarget.rt.height == camera.pixelHeight))
@@ -276,12 +278,74 @@ public class CornellBox : RayTracingTutorial
     return _baseColorTarget;
   }
 
+  private RTHandle RequireDenoisedTarget(Camera camera)
+  {
+    if (_denoisedTarget != null && (_denoisedTarget.rt.width == camera.pixelWidth && _denoisedTarget.rt.height == camera.pixelHeight))
+      return _denoisedTarget;
+
+    if (_denoisedTarget != null) RTHandles.Release(_denoisedTarget);
+    _denoisedTarget = RTHandles.Alloc(
+      width: camera.pixelWidth,
+      height: camera.pixelHeight,
+      slices: 1,
+      depthBufferBits: DepthBits.None,
+      colorFormat: GraphicsFormat.R32G32B32A32_SFloat,
+      filterMode: FilterMode.Point,
+      wrapMode: TextureWrapMode.Clamp,
+      dimension: TextureDimension.Tex2D,
+      enableRandomWrite: true,
+      useMipMap: false,
+      autoGenerateMips: false,
+      isShadowMap: false,
+      anisoLevel: 1,
+      mipMapBias: 0f,
+      msaaSamples: MSAASamples.None,
+      bindTextureMS: false,
+      useDynamicScale: false,
+      memoryless: RenderTextureMemoryless.None,
+      name: $"DenoisedTarget_{camera.name}"
+    );
+    return _denoisedTarget;
+  }
+
+  private RTHandle RequireTemporalTarget(Camera camera)
+  {
+    if (_temporalTarget != null && (_temporalTarget.rt.width == camera.pixelWidth && _temporalTarget.rt.height == camera.pixelHeight))
+      return _temporalTarget;
+
+    if (_temporalTarget != null) RTHandles.Release(_temporalTarget);
+    _temporalTarget = RTHandles.Alloc(
+      width: camera.pixelWidth,
+      height: camera.pixelHeight,
+      slices: 1,
+      depthBufferBits: DepthBits.None,
+      colorFormat: GraphicsFormat.R32G32B32A32_SFloat,
+      filterMode: FilterMode.Point,
+      wrapMode: TextureWrapMode.Clamp,
+      dimension: TextureDimension.Tex2D,
+      enableRandomWrite: true,
+      useMipMap: false,
+      autoGenerateMips: false,
+      isShadowMap: false,
+      anisoLevel: 1,
+      mipMapBias: 0f,
+      msaaSamples: MSAASamples.None,
+      bindTextureMS: false,
+      useDynamicScale: false,
+      memoryless: RenderTextureMemoryless.None,
+      name: $"TemporalTarget_{camera.name}"
+    );
+    return _temporalTarget;
+  }
+
   /// <summary>
   /// constructor.
   /// </summary>
   /// <param name="asset">the tutorial asset.</param>
+  private readonly CornellBoxAsset _assetRef;
   public CornellBox(RayTracingTutorialAsset asset) : base(asset)
   {
+    _assetRef = asset as CornellBoxAsset;
   }
 
   /// <summary>
@@ -305,6 +369,8 @@ public class CornellBox : RayTracingTutorial
     var historyCount = RequireHistoryCount(camera);
     var baseColorTarget = RequireBaseColorTarget(camera);
     var historyBaseColor = RequireHistoryBaseColor(camera);
+    var denoisedTarget = RequireDenoisedTarget(camera);
+    var temporalTarget = RequireTemporalTarget(camera);
 
     var accelerationStructure = _pipeline.RequestAccelerationStructure();
     var PRNGStates = _pipeline.RequirePRNGStates(camera);
@@ -346,20 +412,84 @@ public class CornellBox : RayTracingTutorial
         }
 
         context.ExecuteCommandBuffer(cmd);
-        if (camera.cameraType == CameraType.Game)
-          _frameIndex++;
+      }
+
+      // Spatial Denoise (High-pass bilateral)
+      using (new ProfilingSample(cmd, "DenoiseBilateral"))
+      {
+        var cs = _assetRef != null ? _assetRef.denoiseBilateral : null;
+        int kernel = cs.FindKernel("CSMain");
+        cs.SetVector("_TexelSize", new Vector2(1.0f / outputTarget.rt.width, 1.0f / outputTarget.rt.height));
+        cs.SetFloat("_SigmaSpatial", 1.0f);
+        cs.SetFloat("_SigmaColor", 0.2f);
+        cs.SetFloat("_SigmaNormal", 0.1f);
+        cs.SetFloat("_HighpassStrength", 0.5f);
+        cs.SetInt("_ScaleSigmaWithStride", 1); // 保持不同步长下空间核形状相似
+
+        uint tx = 8, ty = 8, tz = 1;
+        cs.GetKernelThreadGroupSizes(kernel, out tx, out ty, out tz);
+
+        // 多趟：固定 5x5 核，步长 stride = 2^i，ping-pong 写入
+        RTHandle src = outputTarget;
+        RTHandle dst = denoisedTarget;
+        int passes = 3; // i = 0,1,2 -> stride: 1,2,4
+        for (int i = 0; i < passes; i++)
+        {
+          int stride = 1 << i;
+          cs.SetInt("_Stride", stride);
+
+          cs.SetTexture(kernel, "_InputColor", src);
+          cs.SetTexture(kernel, "_Normal", normalTarget);
+          cs.SetTexture(kernel, "_BaseColor", baseColorTarget);
+          cs.SetTexture(kernel, "_DenoisedColor", dst);
+
+          cmd.DispatchCompute(cs, kernel,
+            Mathf.CeilToInt(outputTarget.rt.width / (float)tx),
+            Mathf.CeilToInt(outputTarget.rt.height / (float)ty), 1);
+
+          // 交换 src/dst
+          var tmp = src; src = dst; dst = tmp;
+        }
+
+        // 确保后续时间重投影读取 denoisedTarget
+        denoisedTarget = src;
+      }
+
+      // Temporal Reprojection & Blend
+      using (new ProfilingSample(cmd, "TemporalReproject"))
+      {
+        var cs = _assetRef != null ? _assetRef.temporalReproject : null;
+        int kernel = cs.FindKernel("CSMain");
+        cs.SetTexture(kernel, "_CurrentColor", denoisedTarget);
+        cs.SetTexture(kernel, "_Normal", normalTarget);
+        cs.SetTexture(kernel, "_BaseColor", baseColorTarget);
+        cs.SetTexture(kernel, "_HistoryColor", historyTarget);
+        cs.SetTexture(kernel, "_HistoryNormal", historyNormal);
+        cs.SetTexture(kernel, "_HistoryBaseColor", historyBaseColor);
+        cs.SetTexture(kernel, "_HistoryCount", historyCount);
+        cs.SetTexture(kernel, "_OutColor", temporalTarget);
+        cs.SetTexture(kernel, "_OutCount", countTarget);
+        cs.SetVector("_TexelSize", new Vector2(1.0f / outputTarget.rt.width, 1.0f / outputTarget.rt.height));
+        cs.SetFloat("_NormalCosThr", 0.90f);
+        cs.SetFloat("_BaseColorDiffThr", 0.10f);
+        cs.SetFloat("_CountNMax", 256.0f);
+        uint tx = 8, ty = 8, tz = 1;
+        cs.GetKernelThreadGroupSizes(kernel, out tx, out ty, out tz);
+        cmd.DispatchCompute(cs, kernel, Mathf.CeilToInt(outputTarget.rt.width / (float)tx), Mathf.CeilToInt(outputTarget.rt.height / (float)ty), 1);
       }
 
       using (new ProfilingSample(cmd, "FinalBlit"))
       {
-        cmd.Blit(outputTarget, BuiltinRenderTextureType.CameraTarget, Vector2.one, Vector2.zero);
-        // copy current output to history
-        cmd.Blit(outputTarget, historyTarget);
-        // copy current normal/count to history
+        // present temporal result
+        cmd.Blit(temporalTarget, BuiltinRenderTextureType.CameraTarget, Vector2.one, Vector2.zero);
+        // copy current temporal/color to history for next frame
+        cmd.Blit(temporalTarget, historyTarget);
+        // copy current normal/count/baseColor to history
         cmd.Blit(normalTarget, historyNormal);
         cmd.Blit(countTarget, historyCount);
-        // copy current base color to history
         cmd.Blit(baseColorTarget, historyBaseColor);
+        if (camera.cameraType == CameraType.Game)
+          _frameIndex++;
       }
 
       context.ExecuteCommandBuffer(cmd);

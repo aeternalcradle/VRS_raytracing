@@ -1,0 +1,88 @@
+// Temporal reprojection and blend
+// Inputs: _CurrentColor (after spatial denoise), _Normal, _BaseColor, _HistoryColor, _HistoryNormal, _HistoryBaseColor, _HistoryCount
+// Output: _OutColor, _OutCount
+
+#pragma kernel CSMain
+
+RWTexture2D<float4> _OutColor;
+RWTexture2D<float> _OutCount;
+Texture2D _CurrentColor;
+SamplerState sampler_CurrentColor;
+Texture2D _Normal;
+SamplerState sampler_Normal;
+Texture2D _BaseColor;
+SamplerState sampler_BaseColor;
+Texture2D _HistoryColor;
+SamplerState sampler_HistoryColor;
+Texture2D _HistoryNormal;
+SamplerState sampler_HistoryNormal;
+Texture2D _HistoryBaseColor;
+SamplerState sampler_HistoryBaseColor;
+Texture2D _HistoryCount;
+SamplerState sampler_HistoryCount;
+float2 _TexelSize; // 1/width, 1/height
+
+float4x4 _InvCameraViewProj;
+float4x4 _PrevViewProj;
+float3 _WorldSpaceCameraPos;
+
+float _NormalCosThr;     // 0.90
+float _BaseColorDiffThr; // 0.10
+float _CountNMax;        // 256
+
+[numthreads(8,8,1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+	uint2 pix = id.xy;
+	float2 uv = (pix + 0.5f) * _TexelSize;
+
+	float4 curColorA = _CurrentColor.SampleLevel(sampler_CurrentColor, uv, 0);
+	float3 curColor = curColorA.rgb;
+	float hitT = curColorA.a;
+	float3 curNormal = normalize(_Normal.SampleLevel(sampler_Normal, uv, 0).xyz);
+	float3 curBase = _BaseColor.SampleLevel(sampler_BaseColor, uv, 0).rgb;
+
+	float4 outColor = float4(curColor, hitT);
+	float outCount = (hitT > 0.0f) ? 1.0f : 0.0f;
+
+	if (hitT > 0.0f)
+	{
+		// approximate world-space hit position from camera ray and hitT
+		float3 originWS = _WorldSpaceCameraPos.xyz;
+		float2 screen = (uv * 2.0f - 1.0f);
+		float4 worldH = mul(_InvCameraViewProj, float4(screen, 0, 1));
+		float3 dirWS = normalize(worldH.xyz / worldH.w - originWS);
+		float3 hitPosWS = originWS + dirWS * hitT;
+
+		float4 prevClip = mul(_PrevViewProj, float4(hitPosWS, 1.0f));
+		float2 prevNDC = prevClip.xy / prevClip.w;
+		float2 prevUV = prevNDC * 0.5f + 0.5f;
+		if (all(prevUV >= 0.0f.xx) && all(prevUV <= 1.0f.xx))
+		{
+			float3 hColor = _HistoryColor.SampleLevel(sampler_HistoryColor, prevUV, 0).rgb;
+			float3 hNormal = normalize(_HistoryNormal.SampleLevel(sampler_HistoryNormal, prevUV, 0).xyz);
+			float3 hBase = _HistoryBaseColor.SampleLevel(sampler_HistoryBaseColor, prevUV, 0).rgb;
+			float  hCount = _HistoryCount.SampleLevel(sampler_HistoryCount, prevUV, 0).r;
+
+			float cosTheta = dot(curNormal, hNormal);
+			bool normalValid = cosTheta >= _NormalCosThr;
+			float colorDiff = length(curBase - hBase);
+			bool colorValid = colorDiff <= _BaseColorDiffThr;
+			bool valid = normalValid && colorValid;
+
+			if (!valid) hCount = 0.0f;
+
+			float N = min(hCount + 1.0f, _CountNMax);
+			float a = 1.0f / N;
+			
+			//float3 blended = hColor * (1.0f - a) + curColor * a;
+            float3 blended = curColor;
+
+			outColor = float4(blended, hitT);
+			outCount = N;
+		}
+	}
+
+	_OutColor[pix] = outColor;
+	_OutCount[pix] = outCount;
+} 

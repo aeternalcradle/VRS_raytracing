@@ -3,7 +3,11 @@ guid: ed395685a7815c14d9466f678e55fdd9
 MonoImporter:
   externalObjects: {}
   serializedVersion: 2
-  defaultReferences: []
+  defaultReferences:
+  - shader: {fileID: 4807578003741378534, guid: 0283abd544f43c1499d37d1962917e82,
+      type: 3}
+  - denoiseBilateral: {fileID: 7200000, guid: c2d7da51ca5d02249ab4e8de4f7219b2, type: 3}
+  - temporalReproject: {fileID: 7200000, guid: 9a2a1357a2d226743811efd751a4da54, type: 3}
   executionOrder: 0
   icon: {instanceID: 0}
   userData: 

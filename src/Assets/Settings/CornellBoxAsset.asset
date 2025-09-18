@@ -13,3 +13,5 @@ MonoBehaviour:
   m_Name: CornellBoxAsset
   m_EditorClassIdentifier: 
   shader: {fileID: 4807578003741378534, guid: 0283abd544f43c1499d37d1962917e82, type: 3}
+  denoiseBilateral: {fileID: 7200000, guid: dd855d2e245f7bc4a9a49d38cfebc5fc, type: 3}
+  temporalReproject: {fileID: 7200000, guid: 9a2a1357a2d226743811efd751a4da54, type: 3}
