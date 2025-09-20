@@ -58,12 +58,23 @@ public class CornellBox : RayTracingTutorial
   private readonly System.Collections.Generic.Dictionary<int, RTHandle> _historyNormals = new System.Collections.Generic.Dictionary<int, RTHandle>();
   private readonly System.Collections.Generic.Dictionary<int, RTHandle> _historyCounts = new System.Collections.Generic.Dictionary<int, RTHandle>();
   private readonly System.Collections.Generic.Dictionary<int, RTHandle> _historyBaseColors = new System.Collections.Generic.Dictionary<int, RTHandle>();
+  private readonly System.Collections.Generic.Dictionary<int, Matrix4x4> _prevViewProjs = new System.Collections.Generic.Dictionary<int, Matrix4x4>();
 
   private RTHandle RequireHistoryTarget(Camera camera)
   {
     var id = camera.GetInstanceID();
     if (_historyTargets.TryGetValue(id, out var history))
-      return history;
+    {
+      if (history != null && (history.rt.width != camera.pixelWidth || history.rt.height != camera.pixelHeight))
+      {
+        RTHandles.Release(history);
+        _historyTargets.Remove(id);
+      }
+      else
+      {
+        return history;
+      }
+    }
 
     history = RTHandles.Alloc(
       width: camera.pixelWidth,
@@ -86,7 +97,7 @@ public class CornellBox : RayTracingTutorial
       memoryless: RenderTextureMemoryless.None,
       name: $"HistoryTarget_{camera.name}"
     );
-        _historyTargets.Add(id, history);
+    _historyTargets.Add(id, history);
     return history;
   }
 
@@ -94,7 +105,17 @@ public class CornellBox : RayTracingTutorial
   {
     var id = camera.GetInstanceID();
     if (_historyNormals.TryGetValue(id, out var historyNormal))
-      return historyNormal;
+    {
+      if (historyNormal != null && (historyNormal.rt.width != camera.pixelWidth || historyNormal.rt.height != camera.pixelHeight))
+      {
+        RTHandles.Release(historyNormal);
+        _historyNormals.Remove(id);
+      }
+      else
+      {
+        return historyNormal;
+      }
+    }
 
     historyNormal = RTHandles.Alloc(
       width: camera.pixelWidth,
@@ -125,7 +146,17 @@ public class CornellBox : RayTracingTutorial
   {
     var id = camera.GetInstanceID();
     if (_historyCounts.TryGetValue(id, out var historyCount))
-      return historyCount;
+    {
+      if (historyCount != null && (historyCount.rt.width != camera.pixelWidth || historyCount.rt.height != camera.pixelHeight))
+      {
+        RTHandles.Release(historyCount);
+        _historyCounts.Remove(id);
+      }
+      else
+      {
+        return historyCount;
+      }
+    }
 
     historyCount = RTHandles.Alloc(
       width: camera.pixelWidth,
@@ -156,7 +187,17 @@ public class CornellBox : RayTracingTutorial
   {
     var id = camera.GetInstanceID();
     if (_historyBaseColors.TryGetValue(id, out var historyBaseColor))
-      return historyBaseColor;
+    {
+      if (historyBaseColor != null && (historyBaseColor.rt.width != camera.pixelWidth || historyBaseColor.rt.height != camera.pixelHeight))
+      {
+        RTHandles.Release(historyBaseColor);
+        _historyBaseColors.Remove(id);
+      }
+      else
+      {
+        return historyBaseColor;
+      }
+    }
 
     historyBaseColor = RTHandles.Alloc(
       width: camera.pixelWidth,
@@ -453,6 +494,8 @@ public class CornellBox : RayTracingTutorial
 
         // 确保后续时间重投影读取 denoisedTarget
         denoisedTarget = src;
+
+       
       }
 
       // Temporal Reprojection & Blend
@@ -460,6 +503,17 @@ public class CornellBox : RayTracingTutorial
       {
         var cs = _assetRef != null ? _assetRef.temporalReproject : null;
         int kernel = cs.FindKernel("CSMain");
+        // Matrices and camera position for temporal reprojection
+        int camId = camera.GetInstanceID();
+        var view = camera.worldToCameraMatrix;
+        var proj = GL.GetGPUProjectionMatrix(camera.projectionMatrix, false);
+        var curVP = proj * view;
+        var invCurVP = curVP.inverse;
+        if (!_prevViewProjs.TryGetValue(camId, out var prevVP)) prevVP = curVP;
+
+        cs.SetMatrix("_InvCameraViewProj", invCurVP);
+        cs.SetMatrix("_PrevViewProj", prevVP);
+        cs.SetVector("_WorldSpaceCameraPos", camera.transform.position);
         cs.SetTexture(kernel, "_CurrentColor", denoisedTarget);
         cs.SetTexture(kernel, "_Normal", normalTarget);
         cs.SetTexture(kernel, "_BaseColor", baseColorTarget);
@@ -472,10 +526,13 @@ public class CornellBox : RayTracingTutorial
         cs.SetVector("_TexelSize", new Vector2(1.0f / outputTarget.rt.width, 1.0f / outputTarget.rt.height));
         cs.SetFloat("_NormalCosThr", 0.90f);
         cs.SetFloat("_BaseColorDiffThr", 0.10f);
-        cs.SetFloat("_CountNMax", 256.0f);
+        cs.SetFloat("_CountNMax", 128.0f);
         uint tx = 8, ty = 8, tz = 1;
         cs.GetKernelThreadGroupSizes(kernel, out tx, out ty, out tz);
         cmd.DispatchCompute(cs, kernel, Mathf.CeilToInt(outputTarget.rt.width / (float)tx), Mathf.CeilToInt(outputTarget.rt.height / (float)ty), 1);
+
+        // Update prev VP for this camera after dispatch for use in next frame
+        _prevViewProjs[camId] = curVP;
       }
 
       using (new ProfilingSample(cmd, "FinalBlit"))

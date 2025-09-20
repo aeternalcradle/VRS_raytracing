@@ -11,6 +11,9 @@ public class CameraController : MonoBehaviour
   public float moveSpeed = 5.0f;
   public float boostMultiplier = 3.0f;
 
+  [Header("Discrete Step")]
+  public float stepDistance = 50.0f;
+
   [Header("Look")]
   public float mouseSensitivity = 2.0f;
   public bool holdRightMouseToLook = true;
@@ -65,6 +68,16 @@ public class CameraController : MonoBehaviour
     {
       move = move.normalized * speed * dt;
       transform.Translate(move, Space.Self);
+    }
+
+    // Discrete left/right steps with J/K
+    if (Input.GetKeyDown(KeyCode.J))
+    {
+      transform.Translate(Vector3.left * stepDistance, Space.Self);
+    }
+    if (Input.GetKeyDown(KeyCode.K))
+    {
+      transform.Translate(Vector3.right * stepDistance, Space.Self);
     }
   }
 }
