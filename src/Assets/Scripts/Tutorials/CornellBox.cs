@@ -348,6 +348,7 @@ public class CornellBox : RayTracingTutorial
         context.ExecuteCommandBuffer(cmd);
         if (camera.cameraType == CameraType.Game)
           _frameIndex++;
+        cmd.Clear();
       }
 
       using (new ProfilingSample(cmd, "FinalBlit"))

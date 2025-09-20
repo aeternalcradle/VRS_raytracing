@@ -118,6 +118,7 @@ void CornellBoxGenShader()
         float colorDiff = length(curBaseColor - historyBaseColor);
         bool colorValid = colorDiff <= BASECOLOR_DIFF_THR;
         historyValid = normalValid && colorValid;
+        
         prevCount = SAMPLE_TEXTURE2D_LOD(_HistoryCount, sampler_HistoryCount, prevUV, 0).r;
         if (!historyValid)
         {
