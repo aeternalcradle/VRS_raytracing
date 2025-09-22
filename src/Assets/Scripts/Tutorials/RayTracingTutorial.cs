@@ -22,7 +22,7 @@ public abstract class RayTracingTutorial
   /// <summary>
   /// the tutorial asset.
   /// </summary>
-  private RayTracingTutorialAsset _asset;
+  protected RayTracingTutorialAsset _asset;
 
   /// <summary>
   /// the render pipeline.

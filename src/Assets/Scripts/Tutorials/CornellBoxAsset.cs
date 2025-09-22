@@ -6,6 +6,7 @@
 [CreateAssetMenu(fileName = "CornellBoxAsset", menuName = "Rendering/CornellBoxAsset")]
 public class CornellBoxAsset : RayTracingTutorialAsset
 {
+  public ComputeShader denoiseBilateral;
   /// <summary>
   /// create tutorial.
   /// </summary>

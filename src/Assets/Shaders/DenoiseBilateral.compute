@@ -1,0 +1,85 @@
+#pragma kernel CSMain
+#pragma kernel CSAdd
+
+RWTexture2D<float4> _DenoisedColor;
+Texture2D _InputColor;
+SamplerState sampler_InputColor;
+Texture2D _Normal;
+SamplerState sampler_Normal;
+Texture2D _BaseColor;
+SamplerState sampler_BaseColor;
+float2 _TexelSize; // 1/width, 1/height
+
+int _Stride;              // >= 1
+float _SigmaSpatial;      // spatial sigma in pixel units
+float _SigmaColor;        // guided by base color
+float _SigmaNormal;       // in cos-difference space
+float _HighpassStrength;  // 0..1
+int _ScaleSigmaWithStride; // 0 or 1
+
+[numthreads(8,8,1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+  uint2 pix = id.xy;
+  float2 uv = (pix + 0.5f) * _TexelSize;
+
+  float4 center = _InputColor.SampleLevel(sampler_InputColor, uv, 0);
+  float3 cCenter = center.rgb;
+  float  aCenter = center.a;
+  float3 nCenter = normalize(_Normal.SampleLevel(sampler_Normal, uv, 0).xyz);
+  float3 gCenter = _BaseColor.SampleLevel(sampler_BaseColor, uv, 0).rgb;
+
+  int S = max(_Stride, 1);
+  float sigmaSpatial = _SigmaSpatial * ((_ScaleSigmaWithStride != 0) ? (float)S : 1.0f);
+
+  float wsum = 0.0f;
+  float3 lowpass = 0.0f.xxx;
+
+  [unroll]
+  for (int dy = -2; dy <= 2; ++dy)
+  {
+    [unroll]
+    for (int dx = -2; dx <= 2; ++dx)
+    {
+      float2 uvn = uv + float2(dx * S, dy * S) * _TexelSize;
+      float3 c = _InputColor.SampleLevel(sampler_InputColor, uvn, 0).rgb;
+      float3 n = normalize(_Normal.SampleLevel(sampler_Normal, uvn, 0).xyz);
+      float3 g = _BaseColor.SampleLevel(sampler_BaseColor, uvn, 0).rgb;
+
+      float ds2 = (dx*dx + dy*dy);
+      float wSpatial = exp(-ds2 / (2.0f * sigmaSpatial * sigmaSpatial));
+      float dc = length(g - gCenter);
+      float wColor = exp(-(dc*dc) / (2.0f * _SigmaColor * _SigmaColor));
+      float cosTheta = saturate(dot(n, nCenter));
+      float dn = 1.0f - cosTheta;
+      float wNormal = exp(-(dn*dn) / (2.0f * _SigmaNormal * _SigmaNormal));
+
+      float w = wSpatial * wColor * wNormal;
+      lowpass += c * w;
+      wsum += w;
+    }
+  }
+  lowpass /= max(wsum, 1e-6f);
+
+  float3 highpass = cCenter - lowpass;
+  float3 outColor = lowpass + _HighpassStrength * highpass;
+  _DenoisedColor[pix] = float4(outColor, aCenter);
+}
+
+// simple sum kernel: _Out = _A + _B
+RWTexture2D<float4> _Out;
+Texture2D _A; SamplerState sampler_A;
+Texture2D _B; SamplerState sampler_B;
+
+[numthreads(8,8,1)]
+void CSAdd(uint3 id : SV_DispatchThreadID)
+{
+  uint2 pix = id.xy;
+  float2 uv = (pix + 0.5f) * _TexelSize;
+  float4 a = _A.SampleLevel(sampler_A, uv, 0);
+  float4 b = _B.SampleLevel(sampler_B, uv, 0);
+  _Out[pix] = float4(a.rgb + b.rgb, max(a.a, b.a));
+  // _Out[pix] = float4(a.rgb , a.a);
+}
+
+

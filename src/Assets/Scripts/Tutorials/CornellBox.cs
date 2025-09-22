@@ -42,6 +42,12 @@ public class CornellBox : RayTracingTutorial
     public static readonly int _BaseColorTarget = Shader.PropertyToID("_BaseColorTarget");
   }
 
+  private static class SplitShaderParams
+  {
+    public static readonly int _DirectTarget = Shader.PropertyToID("_DirectTarget");
+    public static readonly int _IndirectTarget = Shader.PropertyToID("_IndirectTarget");
+  }
+
   private readonly int _PRNGStatesShaderId = Shader.PropertyToID("_PRNGStates");
 
   /// <summary>
@@ -186,6 +192,10 @@ public class CornellBox : RayTracingTutorial
   private RTHandle _normalTarget;
   private RTHandle _countTarget;
   private RTHandle _baseColorTarget;
+  private RTHandle _directTarget;
+  private RTHandle _indirectTarget;
+  private RTHandle _directDenoised;
+  private RTHandle _indirectDenoised;
   private RTHandle RequireNormalTarget(Camera camera)
   {
     if (_normalTarget != null && (_normalTarget.rt.width == camera.pixelWidth && _normalTarget.rt.height == camera.pixelHeight))
@@ -276,6 +286,96 @@ public class CornellBox : RayTracingTutorial
     return _baseColorTarget;
   }
 
+  private RTHandle RequireDirectTarget(Camera camera)
+  {
+    if (_directTarget != null && (_directTarget.rt.width == camera.pixelWidth && _directTarget.rt.height == camera.pixelHeight))
+      return _directTarget;
+
+    if (_directTarget != null) RTHandles.Release(_directTarget);
+    _directTarget = RTHandles.Alloc(
+      width: camera.pixelWidth,
+      height: camera.pixelHeight,
+      slices: 1,
+      depthBufferBits: DepthBits.None,
+      colorFormat: GraphicsFormat.R16G16B16A16_SFloat,
+      filterMode: FilterMode.Point,
+      wrapMode: TextureWrapMode.Clamp,
+      dimension: TextureDimension.Tex2D,
+      enableRandomWrite: true,
+      useMipMap: false,
+      autoGenerateMips: false,
+      isShadowMap: false,
+      anisoLevel: 1,
+      mipMapBias: 0f,
+      msaaSamples: MSAASamples.None,
+      bindTextureMS: false,
+      useDynamicScale: false,
+      memoryless: RenderTextureMemoryless.None,
+      name: $"DirectTarget_{camera.name}"
+    );
+    return _directTarget;
+  }
+
+  private RTHandle RequireIndirectTarget(Camera camera)
+  {
+    if (_indirectTarget != null && (_indirectTarget.rt.width == camera.pixelWidth && _indirectTarget.rt.height == camera.pixelHeight))
+      return _indirectTarget;
+
+    if (_indirectTarget != null) RTHandles.Release(_indirectTarget);
+    _indirectTarget = RTHandles.Alloc(
+      width: camera.pixelWidth,
+      height: camera.pixelHeight,
+      slices: 1,
+      depthBufferBits: DepthBits.None,
+      colorFormat: GraphicsFormat.R16G16B16A16_SFloat,
+      filterMode: FilterMode.Point,
+      wrapMode: TextureWrapMode.Clamp,
+      dimension: TextureDimension.Tex2D,
+      enableRandomWrite: true,
+      useMipMap: false,
+      autoGenerateMips: false,
+      isShadowMap: false,
+      anisoLevel: 1,
+      mipMapBias: 0f,
+      msaaSamples: MSAASamples.None,
+      bindTextureMS: false,
+      useDynamicScale: false,
+      memoryless: RenderTextureMemoryless.None,
+      name: $"IndirectTarget_{camera.name}"
+    );
+    return _indirectTarget;
+  }
+
+  private RTHandle RequireDenoised(ref RTHandle handle, Camera camera, string name)
+  {
+    if (handle != null && (handle.rt.width == camera.pixelWidth && handle.rt.height == camera.pixelHeight))
+      return handle;
+
+    if (handle != null) RTHandles.Release(handle);
+    handle = RTHandles.Alloc(
+      width: camera.pixelWidth,
+      height: camera.pixelHeight,
+      slices: 1,
+      depthBufferBits: DepthBits.None,
+      colorFormat: GraphicsFormat.R16G16B16A16_SFloat,
+      filterMode: FilterMode.Point,
+      wrapMode: TextureWrapMode.Clamp,
+      dimension: TextureDimension.Tex2D,
+      enableRandomWrite: true,
+      useMipMap: false,
+      autoGenerateMips: false,
+      isShadowMap: false,
+      anisoLevel: 1,
+      mipMapBias: 0f,
+      msaaSamples: MSAASamples.None,
+      bindTextureMS: false,
+      useDynamicScale: false,
+      memoryless: RenderTextureMemoryless.None,
+      name: name
+    );
+    return handle;
+  }
+
   /// <summary>
   /// constructor.
   /// </summary>
@@ -305,6 +405,10 @@ public class CornellBox : RayTracingTutorial
     var historyCount = RequireHistoryCount(camera);
     var baseColorTarget = RequireBaseColorTarget(camera);
     var historyBaseColor = RequireHistoryBaseColor(camera);
+    var directTarget = RequireDirectTarget(camera);
+    var indirectTarget = RequireIndirectTarget(camera);
+    var directDenoised = RequireDenoised(ref _directDenoised, camera, $"DirectDenoised_{camera.name}");
+    var indirectDenoised = RequireDenoised(ref _indirectDenoised, camera, $"IndirectDenoised_{camera.name}");
 
     var accelerationStructure = _pipeline.RequestAccelerationStructure();
     var PRNGStates = _pipeline.RequirePRNGStates(camera);
@@ -341,6 +445,10 @@ public class CornellBox : RayTracingTutorial
           cmd.SetRayTracingTextureParam(_shader, BaseColorShaderParams._BaseColorTarget, baseColorTarget);
           cmd.SetRayTracingTextureParam(_shader, HistoryShaderParams._HistoryBaseColor, historyBaseColor);
 
+          // bind split outputs
+          cmd.SetRayTracingTextureParam(_shader, SplitShaderParams._DirectTarget, directTarget);
+          cmd.SetRayTracingTextureParam(_shader, SplitShaderParams._IndirectTarget, indirectTarget);
+
           cmd.DispatchRays(_shader, "CornellBoxGenShader", (uint) outputTarget.rt.width,
             (uint) outputTarget.rt.height, 1, camera);
         }
@@ -349,6 +457,77 @@ public class CornellBox : RayTracingTutorial
         if (camera.cameraType == CameraType.Game)
           _frameIndex++;
         cmd.Clear();
+      }
+
+      // SVGF-like progressive bilateral filtering (no history): direct and indirect separately
+      using (new ProfilingSample(cmd, "DenoiseBilateral"))
+      {
+        var assetRef = _asset as CornellBoxAsset;
+        var cs = assetRef != null ? assetRef.denoiseBilateral : null;
+        if (cs != null)
+        {
+          int kMain = cs.FindKernel("CSMain");
+          int kAdd = cs.FindKernel("CSAdd");
+
+          cs.SetVector("_TexelSize", new Vector2(1.0f / outputTarget.rt.width, 1.0f / outputTarget.rt.height));
+          cs.SetFloat("_SigmaSpatial", 1.0f);
+          cs.SetFloat("_SigmaColor", 0.2f);
+          cs.SetFloat("_SigmaNormal", 0.1f);
+          cs.SetFloat("_HighpassStrength", 0.5f);
+          cs.SetInt("_ScaleSigmaWithStride", 1);
+
+          uint tx = 8, ty = 8, tz = 1;
+          cs.GetKernelThreadGroupSizes(kMain, out tx, out ty, out tz);
+
+          // helper local function to filter one source into outTarget with strides 2 then 3
+          System.Action<RTHandle, RTHandle> Filter = (RTHandle srcTex, RTHandle outTex) =>
+          {
+            RTHandle src = srcTex;
+            RTHandle dst = outTex;
+            int[] strides = new int[] { 1, 2, 3,4,5 };
+            for (int i = 0; i < strides.Length; i++)
+            {
+              cs.SetInt("_Stride", strides[i]);
+              cs.SetTexture(kMain, "_InputColor", src);
+              cs.SetTexture(kMain, "_Normal", normalTarget);
+              cs.SetTexture(kMain, "_BaseColor", baseColorTarget);
+              cs.SetTexture(kMain, "_DenoisedColor", dst);
+
+              cmd.DispatchCompute(cs, kMain,
+                Mathf.CeilToInt(outputTarget.rt.width / (float)tx),
+                Mathf.CeilToInt(outputTarget.rt.height / (float)ty), 1);
+
+              var tmp = src; src = dst; dst = tmp;
+            }
+            // ensure outTex has latest
+            if (outTex != src)
+            {
+              // copy src -> outTex by 1 dispatch of add kernel with B=black
+              cs.SetVector("_TexelSize", new Vector2(1.0f / outputTarget.rt.width, 1.0f / outputTarget.rt.height));
+              cs.SetTexture(kAdd, "_A", src);
+              cs.SetTexture(kAdd, "_B", outTex); // reuse as zero initialized; but safer to write directly
+              cs.SetTexture(kAdd, "_Out", outTex);
+              cmd.DispatchCompute(cs, kAdd,
+                Mathf.CeilToInt(outputTarget.rt.width / (float)tx),
+                Mathf.CeilToInt(outputTarget.rt.height / (float)ty), 1);
+            }
+          };
+
+          Filter(directTarget, directDenoised);
+          Filter(indirectTarget, indirectDenoised);
+
+          // indirectDenoised = indirectTarget;
+          // directDenoised = directTarget;
+
+          // combine denoised direct + indirect into outputTarget
+          cs.SetVector("_TexelSize", new Vector2(1.0f / outputTarget.rt.width, 1.0f / outputTarget.rt.height));
+          cs.SetTexture(kAdd, "_A", directDenoised);
+          cs.SetTexture(kAdd, "_B", indirectDenoised);
+          cs.SetTexture(kAdd, "_Out", outputTarget);
+          cmd.DispatchCompute(cs, kAdd,
+            Mathf.CeilToInt(outputTarget.rt.width / (float)tx),
+            Mathf.CeilToInt(outputTarget.rt.height / (float)ty), 1);
+        }
       }
 
       using (new ProfilingSample(cmd, "FinalBlit"))

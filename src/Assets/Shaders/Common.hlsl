@@ -32,6 +32,7 @@ struct RayIntersection
   float hitT;
   float3 normalWS; // primary hit normal for reprojection validation
   float3 baseColor; // primary hit base color (albedo) for reprojection validation
+  float3 emittedPrimary; // emission seen at primary hit (for direct lighting split)
 };
 
 struct AttributeData

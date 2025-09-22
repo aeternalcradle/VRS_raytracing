@@ -75,6 +75,7 @@
 
       struct IntersectionVertex
       {
+        float3 normalOS;
         float2 texCoord0;
       };
 
@@ -87,6 +88,7 @@
 
       void FetchIntersectionVertex(uint vertexIndex, out IntersectionVertex outVertex)
       {
+        outVertex.normalOS = UnityRayTracingFetchVertexAttribute3(vertexIndex, kVertexAttributeNormal);
         outVertex.texCoord0  = UnityRayTracingFetchVertexAttribute2(vertexIndex, kVertexAttributeTexCoord0);
       }
 
@@ -105,9 +107,24 @@
         // Compute the full barycentric coordinates
         float3 barycentricCoordinates = float3(1.0 - attributeData.barycentrics.x - attributeData.barycentrics.y, attributeData.barycentrics.x, attributeData.barycentrics.y);
 
-        // Get uv and sample texture.
+        // Interpolate normal, uv and sample texture.
+        float3 normalOS = INTERPOLATE_RAYTRACING_ATTRIBUTE(v0.normalOS, v1.normalOS, v2.normalOS, barycentricCoordinates);
         float2 texCoord0 = INTERPOLATE_RAYTRACING_ATTRIBUTE(v0.texCoord0, v1.texCoord0, v2.texCoord0, barycentricCoordinates);
+        float3x3 objectToWorld = (float3x3)ObjectToWorld3x4();
+        float3 normalWS = normalize(mul(objectToWorld, normalOS));
         float4 texColor = SAMPLE_TEXTURE2D_LOD(_BaseColorMap, sampler_BaseColorMap, texCoord0, 0);
+
+        // record primary hit info
+        if (rayIntersection.hitT < 0.0f)
+        {
+          float t = RayTCurrent();
+          rayIntersection.hitT = t;
+          rayIntersection.normalWS = normalWS;
+          rayIntersection.baseColor = texColor.rgb;
+          rayIntersection.emittedPrimary = texColor.rgb * _Intensity;
+        }
+
+        // emissive return
         rayIntersection.color = float4(texColor.rgb * _Intensity, 1.0f);
       }
 
